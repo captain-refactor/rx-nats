@@ -5,7 +5,7 @@ import * as nuid from 'nuid';
 import {map, share} from "rxjs/operators";
 
 export async function connectToNATS(): Promise<Client> {
-    return await connect(process.env.NATS_URI)
+    return await connect(process.env.NATS_URI||'')
 }
 
 export interface XMsg<T, R = unknown> {
