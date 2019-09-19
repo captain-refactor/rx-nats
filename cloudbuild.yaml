@@ -23,6 +23,8 @@ steps:
     args:
       - run
       - test
+    env:
+      - NATS_URI=test-nats
   - name: gcr.io/cloud-builders/docker
     args:
       - stop
