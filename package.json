@@ -1,0 +1,40 @@
+{
+  "name": "rx-nats",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "mocha ./dist/nats.spec.js",
+    "build": "tsc",
+    "check": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/captain-refactor/rx-nats.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/captain-refactor/rx-nats/issues"
+  },
+  "homepage": "https://github.com/captain-refactor/rx-nats#readme",
+  "dependencies": {
+    "@hapi/joi": "^16.1.2",
+    "lodash": "^4.17.15",
+    "nuid": "^1.1.0",
+    "rxjs": "^6.5.3",
+    "ts-nats": "^1.2.4"
+  },
+  "devDependencies": {
+    "@types/chai": "^4.2.3",
+    "@types/hapi__joi": "^15.0.4",
+    "@types/lodash": "^4.14.138",
+    "@types/mocha": "^5.2.7",
+    "@types/node": "^12.7.5",
+    "chai": "^4.2.0",
+    "mocha": "^6.2.0",
+    "ts-node": "^8.4.1",
+    "typescript": "^3.6.3"
+  }
+}
