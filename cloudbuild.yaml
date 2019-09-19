@@ -1,0 +1,12 @@
+steps:
+  - name: gcr.io/cloud-builders/npm:current
+    args:
+      - install
+  - name: gcr.io/cloud-builders/npm:current
+    args:
+      - run
+      - build
+  - name: gcr.io/cloud-builders/npm:current
+    args:
+      - run
+      - test
