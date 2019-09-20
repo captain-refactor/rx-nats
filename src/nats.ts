@@ -1,11 +1,11 @@
 import {attempt, Schema, string} from "@hapi/joi";
 import {Client, connect, Msg, Subscription, SubscriptionOptions} from "ts-nats";
-import {Observable, Observer} from "rxjs";
-import * as nuid from 'nuid';
-import {map, share} from "rxjs/operators";
+import {Observable, Observer, Subject} from "rxjs";
+import * as nuid from "nuid";
+import {map} from "rxjs/operators";
 
 export async function connectToNATS(): Promise<Client> {
-    return await connect(process.env.NATS_URI||'')
+    return await connect(process.env.NATS_URI || "");
 }
 
 export interface XMsg<T, R = unknown> {
@@ -16,54 +16,95 @@ export interface XMsg<T, R = unknown> {
     size: number;
 }
 
-export type NatsParseOptions = Pick<NatsSubjectOptions, 'json' | 'schema' | 'reply'>;
-
-export type RawNatsOptions = Pick<NatsSubjectOptions, 'name' | 'subscribeOpts'>;
+export type RawNatsOptions = Pick<NatsSubjectOptions, "name" | "subscribeOpts">;
 
 export interface NatsSubjectOptions {
     name: string;
     json?: boolean;
     schema?: Schema;
     subscribeOpts?: SubscriptionOptions;
-    reply?: Omit<NatsSubjectOptions, 'name'>;
+    reply?: Omit<NatsSubjectOptions, "name">;
 }
 
+export class HotNatsSubject {
+    private _subject = new Subject<Msg>();
+    private _subscription: Subscription;
 
-export class RawNatsSubject extends Observable<Msg> {
-    constructor(private client: Client, opts: RawNatsOptions) {
-        super(subscriber => {
-            let subscriptionPromise = this.client
-                .subscribe(opts.name, (err, msg) => {
-                    if (err) {
-                        subscriber.error(err);
-                    } else {
+    constructor(private client: Client, private opts: RawNatsOptions) {
+    }
 
-                        subscriber.next(msg);
-                    }
-                }, opts.subscribeOpts);
-            let subscription: Subscription;
-            subscriptionPromise
-                .then(value => subscription = value)
-                .catch(err => {
-                    subscriber.error(err);
-                });
-            return () => {
-                subscription.unsubscribe();
-            };
-        });
+    async subscribe(): Promise<void> {
+        this._subscription = await this.client.subscribe(
+            this.opts.name,
+            (err, msg) => {
+                if (err) {
+                    this._subject.error(err);
+                } else {
+                    this._subject.next(msg);
+                }
+            },
+            this.opts.subscribeOpts
+        );
+    }
+
+    unsubscribe(complete: boolean = true) {
+        this._subscription && this._subscription.unsubscribe();
+        if (complete) this._subject.complete();
+    }
+
+    observable() {
+        return this._subject.asObservable();
     }
 }
 
+export class ColdNatsSubject extends Observable<Msg> {
+    private _hot: HotNatsSubject;
 
-export class NatsSubject<T, R> extends Observable<XMsg<T, R>> implements Observer<T> {
+    constructor(private client: Client, opts: RawNatsOptions) {
+        super(subscriber => {
+            let subscription = this._hot.observable().subscribe(subscriber);
+            this._hot.subscribe().catch(reason => subscriber.error(reason));
+            return () => {
+                subscription.unsubscribe();
+                this._hot.unsubscribe();
+            };
+        });
+        this._hot = new HotNatsSubject(client, opts);
+    }
+}
+
+export class RxNatsError extends Error {
+}
+
+export class InvalidJSON extends RxNatsError {
+    constructor(message: string, public data) {
+        super(message);
+    }
+}
+
+export class NatsSubject<T, R> implements Observer<T> {
+    private _hot: HotNatsSubject;
 
     get name() {
         return this.opts.name;
     }
 
+    readonly hot: Observable<XMsg<T, R>>;
+
+    readonly cold: Observable<XMsg<T, R>>;
+
     constructor(private client: Client, private opts: NatsSubjectOptions) {
-        super();
-        this.source = new RawNatsSubject(client, opts).pipe(share(), this.parseMsg(client));
+        this._hot = new HotNatsSubject(this.client, this.opts);
+        this.hot = this._hot.observable().pipe(this.parseMsg());
+        this.cold = new ColdNatsSubject(this.client, this.opts).pipe(this.parseMsg());
+    }
+
+    subscribe() {
+        return this._hot.subscribe();
+    }
+
+    unsubscribe() {
+        return this._hot.unsubscribe();
     }
 
     request(data?: T): NatsSubject<R, any> {
@@ -85,7 +126,7 @@ export class NatsSubject<T, R> extends Observable<XMsg<T, R>> implements Observe
     }
 
     next(data: T) {
-        this.publish(data)
+        this.publish(data);
     }
 
     error() {
@@ -94,22 +135,31 @@ export class NatsSubject<T, R> extends Observable<XMsg<T, R>> implements Observe
     complete() {
     }
 
-    private parseMsg(client: Client) {
+    private parseMsg() {
         let opts = this.opts;
-        return map((msg: Msg): XMsg<T, R> => {
-            let data = msg.data;
-            if (opts.json && data !== undefined) {
-                data = JSON.parse(data);
-                if (opts.schema) {
-                    data = attempt(data, opts.schema);
+        return map(
+            (msg: Msg): XMsg<T, R> => {
+                let data = msg.data;
+                if (opts.json && data !== undefined) {
+                    try {
+                        data = JSON.parse(data);
+                    } catch (e) {
+                        throw new InvalidJSON(e, msg.data);
+                    }
+                    if (opts.schema) {
+                        data = attempt(data, opts.schema);
+                    }
                 }
+                let reply: NatsSubject<R, any>;
+                if (msg.reply) {
+                    reply = new NatsSubject<R, any>(this.client, {
+                        ...(opts.reply || {}),
+                        name: msg.reply
+                    });
+                }
+                return {subject: this, data, reply, sid: msg.sid, size: msg.size};
             }
-            let reply: NatsSubject<R, any>;
-            if (msg.reply) {
-                reply = new NatsSubject<R, any>(client, {...(opts.reply || {}), name: msg.reply});
-            }
-            return {subject: this, data, reply, sid: msg.sid, size: msg.size}
-        })
+        );
     }
 }
 
@@ -117,11 +167,13 @@ export class PowerNats {
     constructor(public readonly client: Client, public queue?: string) {
     }
 
-    subject<T = unknown, R = unknown>(opts: NatsSubjectOptions | string): NatsSubject<T, R> {
+    subject<T = unknown, R = unknown>(
+        opts: NatsSubjectOptions | string
+    ): NatsSubject<T, R> {
         if (!opts) {
             throw new Error("missing subject options");
         }
-        if (typeof opts === 'string') {
+        if (typeof opts === "string") {
             opts = {name: opts};
         }
         opts.subscribeOpts = opts.subscribeOpts || {};
@@ -134,7 +186,6 @@ export class PowerNats {
         this.client.close();
     }
 }
-
 
 export interface FrameOptions {
     log?: boolean | string[]; // default true
