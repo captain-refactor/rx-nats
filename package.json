@@ -2,7 +2,8 @@
   "name": "rx-nats",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "dist/nats.js",
+  "types": "dist/nats.d.ts",
   "scripts": {
     "test": "mocha ./dist/nats.spec.js",
     "build": "tsc",

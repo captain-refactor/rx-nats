@@ -1,0 +1,36 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - run
+      - -d
+      - -p
+      - 4222:4222
+      - -p
+      - 6222:6222
+      - -p
+      - 8222:8222
+      - --name=test-nats
+      - --network=cloudbuild
+      - nats
+  - name: gcr.io/cloud-builders/npm:current
+    args:
+      - install
+  - name: gcr.io/cloud-builders/npm:current
+    args:
+      - run
+      - build
+  - name: gcr.io/cloud-builders/npm:current
+    args:
+      - run
+      - test
+    env:
+      - NATS_URI=test-nats
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - stop
+      - test-nats
+  - name: gcr.io/cloud-builders/npm:current
+    env:
+      - NPM_TOKEN=_NPM_TOKEN
+    args:
+      - publish
