@@ -29,6 +29,11 @@ steps:
     args:
       - stop
       - test-nats
+  - name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - "echo //registry.npmjs.org/:_authToken=${NPM_TOKEN} > .npmrc"
   - name: gcr.io/cloud-builders/npm:current
     env:
       - NPM_TOKEN=$_NPM_TOKEN

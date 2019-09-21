@@ -14,7 +14,7 @@
     "url": "git+https://github.com/captain-refactor/rx-nats.git"
   },
   "keywords": [],
-  "author": "",
+  "author": "Jan Kremen",
   "license": "ISC",
   "bugs": {
     "url": "https://github.com/captain-refactor/rx-nats/issues"
