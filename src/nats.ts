@@ -1,6 +1,6 @@
 import {attempt, Schema, string} from "@hapi/joi";
 import {Client, connect, Msg, Subscription, SubscriptionOptions} from "ts-nats";
-import {Observable, Observer, Subject} from "rxjs";
+import {NextObserver, Observable, Observer, Subject} from "rxjs";
 import * as nuid from "nuid";
 import {map} from "rxjs/operators";
 
@@ -82,7 +82,7 @@ export class InvalidJSON extends RxNatsError {
     }
 }
 
-export class NatsSubject<T, R> implements Observer<T> {
+export class NatsSubject<T, R> implements NextObserver<T> {
     private _hot: HotNatsSubject;
 
     get name() {
@@ -127,12 +127,6 @@ export class NatsSubject<T, R> implements Observer<T> {
 
     next(data: T) {
         this.publish(data);
-    }
-
-    error() {
-    }
-
-    complete() {
     }
 
     private parseMsg() {

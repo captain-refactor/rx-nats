@@ -1,8 +1,20 @@
 import {connectToNATS, InvalidJSON, PowerNats, XMsg} from "./nats";
-import {map, materialize, retry, take, toArray, share, tap} from "rxjs/operators";
+import {
+    map,
+    materialize,
+    retry,
+    take,
+    toArray,
+    share,
+    tap,
+    takeUntil,
+    debounceTime,
+    filter,
+    last, pluck
+} from "rxjs/operators";
 import {expect} from "chai";
-import {object, string} from "@hapi/joi";
-import {Observable, of} from "rxjs";
+import {attempt, object, string} from "@hapi/joi";
+import {interval, Observable, of, Subject} from "rxjs";
 
 describe('PowerNats', function () {
     let power: PowerNats;
@@ -67,5 +79,19 @@ describe('PowerNats', function () {
             if (x == 3) throw new Error("boom")
         }), retry(), toArray()).toPromise();
         expect(result).to.be.deep.eq([1, 2, 4, 5]);
+    });
+    it('should observe service health and start it again, when health check fails', async function () {
+        let startServiceCommand$ = new Subject();
+        let healthNatsSubject = power.subject({name: "service.health"});
+        let serviceHealth = healthNatsSubject.cold.pipe(share());
+        // service need to be alive at least 7 cycles
+        let test = serviceHealth.pipe(take(7), pluck("data"), toArray());
+        let running = true;
+        startServiceCommand$.pipe(takeUntil(test)).subscribe(() => running = true);
+        interval(50).pipe(takeUntil(test), filter(() => running), map(x => x.toString())).subscribe(healthNatsSubject);
+        let serviceDown$ = serviceHealth.pipe(takeUntil(test), debounceTime(200));
+        serviceDown$.subscribe(startServiceCommand$);
+        serviceHealth.pipe(take(2), last()).subscribe(() => running = false);
+        await test.toPromise();
     });
 });
