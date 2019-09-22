@@ -26,14 +26,18 @@ export interface NatsSubjectOptions {
     reply?: Omit<NatsSubjectOptions, "name">;
 }
 
-export class HotNatsSubject {
+export class HotNatsSubject implements NextObserver<any> {
     private _subject = new Subject<Msg>();
     private _subscription: Subscription;
 
     constructor(private client: Client, private opts: RawNatsOptions) {
     }
 
-    async subscribe(): Promise<void> {
+    /**
+     * Subscribe to nats subject.
+     * we us nats prefix to avoid collision with rxjs subscribe method.
+     */
+    async natsSubscribe(): Promise<void> {
         this._subscription = await this.client.subscribe(
             this.opts.name,
             (err, msg) => {
@@ -47,7 +51,11 @@ export class HotNatsSubject {
         );
     }
 
-    unsubscribe(complete: boolean = true) {
+    /**
+     * unsubscribe from nats subject
+     * we us nats prefix to avoid collision with rxjs unsubscribe method.
+     */
+    natsUnsubscribe(complete: boolean = true) {
         this._subscription && this._subscription.unsubscribe();
         if (complete) this._subject.complete();
     }
@@ -55,21 +63,32 @@ export class HotNatsSubject {
     observable() {
         return this._subject.asObservable();
     }
+
+    /**
+     * to implement subscriber
+     */
+    next(data?) {
+        this.client.publish(this.opts.name, data);
+    }
 }
 
-export class ColdNatsSubject extends Observable<Msg> {
+export class ColdNatsSubject extends Observable<Msg> implements NextObserver<any> {
     private _hot: HotNatsSubject;
 
-    constructor(private client: Client, opts: RawNatsOptions) {
+    constructor(private client: Client, private opts: RawNatsOptions) {
         super(subscriber => {
             let subscription = this._hot.observable().subscribe(subscriber);
-            this._hot.subscribe().catch(reason => subscriber.error(reason));
+            this._hot.natsSubscribe().catch(reason => subscriber.error(reason));
             return () => {
                 subscription.unsubscribe();
-                this._hot.unsubscribe();
+                this._hot.natsUnsubscribe();
             };
         });
         this._hot = new HotNatsSubject(client, opts);
+    }
+
+    next(data?) {
+        this.client.publish(this.opts.name, data);
     }
 }
 
@@ -99,12 +118,20 @@ export class NatsSubject<T, R> implements NextObserver<T> {
         this.cold = new ColdNatsSubject(this.client, this.opts).pipe(this.parseMsg());
     }
 
-    subscribe() {
-        return this._hot.subscribe();
+    /**
+     * Subscribe to nats subject.
+     * we us nats prefix to avoid collision with rxjs subscribe method.
+     */
+    natsSubscribe() {
+        return this._hot.natsSubscribe();
     }
 
-    unsubscribe() {
-        return this._hot.unsubscribe();
+    /**
+     * unsubscribe from nats subject
+     * we us nats prefix to avoid collision with rxjs unsubscribe method.
+     */
+    natsUnsubscribe() {
+        return this._hot.natsUnsubscribe();
     }
 
     request(data?: T): NatsSubject<R, any> {

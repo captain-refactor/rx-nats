@@ -1,4 +1,4 @@
-import {connectToNATS, InvalidJSON, PowerNats, XMsg} from "./nats";
+import {connectToNATS, HotNatsSubject, InvalidJSON, PowerNats, XMsg} from "./nats";
 import {
     map,
     materialize,
@@ -14,7 +14,8 @@ import {
 } from "rxjs/operators";
 import {expect} from "chai";
 import {attempt, object, string} from "@hapi/joi";
-import {interval, Observable, of, Subject} from "rxjs";
+import {interval, Observable, of, range, Subject} from "rxjs";
+import {Client} from "ts-nats";
 
 describe('PowerNats', function () {
     let power: PowerNats;
@@ -63,12 +64,12 @@ describe('PowerNats', function () {
                 name: string().required()
             })
         });
-        await a$.subscribe();
+        await a$.natsSubscribe();
         let promise = a$.hot.pipe(retry(), take(1)).toPromise();
         power.subject('x2').publish("bad value");
         a$.publish({name: "good value"});
         let result = await promise;
-        a$.unsubscribe();
+        a$.natsUnsubscribe();
         expect(result.data).to.be.deep.eq({name: "good value"});
     });
     it('should not unsubscribe shared observable', async function () {
@@ -92,6 +93,51 @@ describe('PowerNats', function () {
         let serviceDown$ = serviceHealth.pipe(takeUntil(test), debounceTime(200));
         serviceDown$.subscribe(startServiceCommand$);
         serviceHealth.pipe(take(2), last()).subscribe(() => running = false);
-        await test.toPromise();
+        let result = await test.toPromise();
+        expect(result.length).eq(7);
+    });
+
+    it('should subscribe to hot observable and receive messages', async function () {
+        // let sub = new Subject();
+        let sub = power.subject("hot");
+        await sub.natsSubscribe();
+        let testPromise = sub.hot.pipe(take(3), pluck('data'), toArray()).toPromise();
+        range(0, 3).pipe(map(x => x.toString())).subscribe(sub);
+        let result = await testPromise;
+        expect(result).to.be.deep.eq(['0', '1', '2']);
+        sub.natsUnsubscribe();
+    });
+
+    it('should stay subscribed, when error happens', async function () {
+        let sub = power.subject("resource.get");
+        await sub.natsSubscribe();
+        let result = [];
+        let route = sub.hot.pipe(tap(msg => {
+            if (msg.data == 'throw') throw new Error("test error");
+            result.push(msg.data);
+        }), pluck('data'), retry(), take(2), toArray());
+        of('a', 'throw', 'b').subscribe(sub);
+        await route.toPromise();
+        expect(result).deep.eq(['a', 'b']);
+    });
+});
+
+describe('HotNatsSubject', function () {
+    let client: Client;
+    before(async () => {
+        client = await connectToNATS();
+    });
+    after(async () => {
+        client.close();
+    });
+    it('should subscribe to data in hot observable', async function () {
+        let sub = new HotNatsSubject(client, {name: "hot"});
+        let test = sub.observable().pipe(take(3), pluck('data'), toArray());
+        await sub.natsSubscribe();
+        let resultPromise = test.toPromise();
+        range(0, 5).pipe(map(x => x.toString())).subscribe(sub);
+        let result = await resultPromise;
+        expect(result).deep.eq(['0', '1', '2']);
+        sub.natsUnsubscribe();
     });
 });
