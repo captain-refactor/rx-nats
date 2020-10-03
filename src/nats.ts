@@ -101,6 +101,11 @@ export class InvalidJSON extends RxNatsError {
     }
 }
 
+interface IPublishOptions {
+    reply?: string;
+    subjectSuffix?: string;
+}
+
 export class NatsSubject<T, R> implements NextObserver<T> {
     private _hot: HotNatsSubject;
 
@@ -136,12 +141,12 @@ export class NatsSubject<T, R> implements NextObserver<T> {
 
     request(data?: T): NatsSubject<R, any> {
         let name = `INBOX_${this.opts.name}_${nuid.next()}`;
-        this.publish(data, name);
+        this.publish(data, {reply: name});
         let inbox = this.opts.reply || {};
         return new NatsSubject<R, any>(this.clientProvider, {name, ...inbox});
     }
 
-    publish(data: T, reply?: string): void {
+    publish(data: T, opts?: IPublishOptions): void {
         let toSend: any = data;
         if (this.opts.schema) {
             toSend = attempt(data, this.opts.schema);
@@ -149,7 +154,9 @@ export class NatsSubject<T, R> implements NextObserver<T> {
         if (data && this.opts.json) {
             toSend = JSON.stringify(data);
         }
-        this.clientProvider.client.publish(this.opts.name, toSend, reply);
+        let subj = this.opts.name;
+        if (opts?.subjectSuffix) subj += opts.subjectSuffix;
+        this.clientProvider.client.publish(subj, toSend, opts?.reply);
     }
 
     next(data: T) {
@@ -255,7 +262,7 @@ export class PromiseClientProvider implements ClientProvider {
 }
 
 export class SimpleClientProvider implements ClientProvider {
-    constructor(public client: Client) {
+    constructor(public readonly client: Client) {
     }
 
     async init() {
