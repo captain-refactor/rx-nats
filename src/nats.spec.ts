@@ -13,7 +13,7 @@ import {
     last, pluck
 } from "rxjs/operators";
 import {expect} from "chai";
-import {attempt, object, string} from "@hapi/joi";
+import {object, string} from "@hapi/joi";
 import {interval, Observable, of, range, Subject} from "rxjs";
 import {Client} from "ts-nats";
 

@@ -1,6 +1,6 @@
-import {attempt, Schema, string} from "@hapi/joi";
+import {attempt, Schema} from "@hapi/joi";
 import {Client, connect, Msg, Subscription, SubscriptionOptions} from "ts-nats";
-import {NextObserver, Observable, Observer, Subject} from "rxjs";
+import {NextObserver, Observable, Subject} from "rxjs";
 import * as nuid from "nuid";
 import {map} from "rxjs/operators";
 
@@ -199,8 +199,7 @@ export class PowerNats {
         }
         opts.subscribeOpts = opts.subscribeOpts || {};
         if (this.queue) opts.subscribeOpts.queue = this.queue;
-        let subject = new NatsSubject<T, R>(this.client, opts);
-        return subject;
+        return new NatsSubject<T, R>(this.client, opts);
     }
 
     close() {
