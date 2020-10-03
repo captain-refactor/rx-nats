@@ -2,3 +2,5 @@ src
 node_modules
 start-nats.sh
 .gitignore
+cloudbuild.yaml
+cloudbuild-yaml.yaml
