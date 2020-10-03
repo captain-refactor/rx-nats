@@ -1,4 +1,4 @@
-import {connectToNATS, HotNatsSubject, InvalidJSON, PowerNats, XMsg} from "./nats";
+import {connectToNATS, HotNatsSubject, InvalidJSON, PowerNats, SimpleClientProvider, XMsg} from "./nats";
 import {
     map,
     materialize,
@@ -19,7 +19,10 @@ import {Client} from "ts-nats";
 
 describe('PowerNats', function () {
     let power: PowerNats;
-    before(async () => power = new PowerNats(await connectToNATS()));
+    before(async () => {
+        power = new PowerNats(connectToNATS())
+        await power.init();
+    });
     after(async () => power.close());
 
     it('should subscribe and unsubscribe', async function () {
@@ -131,7 +134,7 @@ describe('HotNatsSubject', function () {
         client.close();
     });
     it('should subscribe to data in hot observable', async function () {
-        let sub = new HotNatsSubject(client, {name: "hot"});
+        let sub = new HotNatsSubject(new SimpleClientProvider(client), {name: "hot"});
         let test = sub.observable().pipe(take(3), pluck('data'), toArray());
         await sub.natsSubscribe();
         let resultPromise = test.toPromise();

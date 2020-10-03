@@ -30,7 +30,7 @@ export class HotNatsSubject implements NextObserver<any> {
     private _subject = new Subject<Msg>();
     private _subscription: Subscription;
 
-    constructor(private client: Client, private opts: RawNatsOptions) {
+    constructor(private clientProvider: ClientProvider, private opts: RawNatsOptions) {
     }
 
     /**
@@ -38,7 +38,7 @@ export class HotNatsSubject implements NextObserver<any> {
      * we us nats prefix to avoid collision with rxjs subscribe method.
      */
     async natsSubscribe(): Promise<void> {
-        this._subscription = await this.client.subscribe(
+        this._subscription = await this.clientProvider.client.subscribe(
             this.opts.name,
             (err, msg) => {
                 if (err) {
@@ -68,14 +68,14 @@ export class HotNatsSubject implements NextObserver<any> {
      * to implement subscriber
      */
     next(data?) {
-        this.client.publish(this.opts.name, data);
+        this.clientProvider.client.publish(this.opts.name, data);
     }
 }
 
 export class ColdNatsSubject extends Observable<Msg> implements NextObserver<any> {
     private _hot: HotNatsSubject;
 
-    constructor(private client: Client, private opts: RawNatsOptions) {
+    constructor(private clientProvider: ClientProvider, private opts: RawNatsOptions) {
         super(subscriber => {
             let subscription = this._hot.observable().subscribe(subscriber);
             this._hot.natsSubscribe().catch(reason => subscriber.error(reason));
@@ -84,11 +84,11 @@ export class ColdNatsSubject extends Observable<Msg> implements NextObserver<any
                 this._hot.natsUnsubscribe();
             };
         });
-        this._hot = new HotNatsSubject(client, opts);
+        this._hot = new HotNatsSubject(clientProvider, opts);
     }
 
     next(data?) {
-        this.client.publish(this.opts.name, data);
+        this.clientProvider.client.publish(this.opts.name, data);
     }
 }
 
@@ -112,10 +112,10 @@ export class NatsSubject<T, R> implements NextObserver<T> {
 
     readonly cold: Observable<XMsg<T, R>>;
 
-    constructor(private client: Client, private opts: NatsSubjectOptions) {
-        this._hot = new HotNatsSubject(this.client, this.opts);
+    constructor(private clientProvider: ClientProvider, private opts: NatsSubjectOptions) {
+        this._hot = new HotNatsSubject(this.clientProvider, this.opts);
         this.hot = this._hot.observable().pipe(this.parseMsg());
-        this.cold = new ColdNatsSubject(this.client, this.opts).pipe(this.parseMsg());
+        this.cold = new ColdNatsSubject(this.clientProvider, this.opts).pipe(this.parseMsg());
     }
 
     /**
@@ -138,7 +138,7 @@ export class NatsSubject<T, R> implements NextObserver<T> {
         let name = `INBOX_${this.opts.name}_${nuid.next()}`;
         this.publish(data, name);
         let inbox = this.opts.reply || {};
-        return new NatsSubject<R, any>(this.client, {name, ...inbox});
+        return new NatsSubject<R, any>(this.clientProvider, {name, ...inbox});
     }
 
     publish(data: T, reply?: string): void {
@@ -149,7 +149,7 @@ export class NatsSubject<T, R> implements NextObserver<T> {
         if (data && this.opts.json) {
             toSend = JSON.stringify(data);
         }
-        this.client.publish(this.opts.name, toSend, reply);
+        this.clientProvider.client.publish(this.opts.name, toSend, reply);
     }
 
     next(data: T) {
@@ -173,7 +173,7 @@ export class NatsSubject<T, R> implements NextObserver<T> {
                 }
                 let reply: NatsSubject<R, any>;
                 if (msg.reply) {
-                    reply = new NatsSubject<R, any>(this.client, {
+                    reply = new NatsSubject<R, any>(this.clientProvider, {
                         ...(opts.reply || {}),
                         name: msg.reply
                     });
@@ -184,8 +184,28 @@ export class NatsSubject<T, R> implements NextObserver<T> {
     }
 }
 
+function isPromise<T>(obj: T | Promise<T>): obj is Promise<T> {
+    return !!(obj as Promise<T>).then;
+
+}
+
 export class PowerNats {
-    constructor(public readonly client: Client, public queue?: string) {
+    private readonly clientProvider: ClientProvider;
+
+    get client() {
+        return this.clientProvider.client;
+    }
+
+    constructor(client: Client | Promise<Client>, public queue?: string) {
+        if (isPromise(client)) {
+            this.clientProvider = new PromiseClientProvider(client);
+        } else {
+            this.clientProvider = new SimpleClientProvider(client);
+        }
+    }
+
+    async init() {
+        await this.clientProvider.init();
     }
 
     subject<T = unknown, R = unknown>(
@@ -199,14 +219,45 @@ export class PowerNats {
         }
         opts.subscribeOpts = opts.subscribeOpts || {};
         if (this.queue) opts.subscribeOpts.queue = this.queue;
-        return new NatsSubject<T, R>(this.client, opts);
+        return new NatsSubject<T, R>(this.clientProvider, opts);
     }
 
     close() {
-        this.client.close();
+        this.clientProvider.client.close();
     }
 }
 
 export interface FrameOptions {
     log?: boolean | string[]; // default true
+}
+
+export interface ClientProvider {
+    client: Client;
+
+    init(): Promise<void>;
+}
+
+export class PromiseClientProvider implements ClientProvider {
+    private _client: Client;
+    get client(): Client {
+        if (!this._client) {
+            throw new Error("nats client not initialized");
+        }
+        return this._client;
+    }
+
+    constructor(private promise: Promise<Client>) {
+    }
+
+    async init() {
+        this._client = await this.promise;
+    }
+}
+
+export class SimpleClientProvider implements ClientProvider {
+    constructor(public client: Client) {
+    }
+
+    async init() {
+    }
 }
