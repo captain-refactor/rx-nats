@@ -27,7 +27,7 @@ describe('PowerNats', function () {
 
     it('should subscribe and unsubscribe', async function () {
         let subject = power.subject<string>({name: 'test1'});
-        let msgPromise = subject.cold.pipe(take(1)).toPromise();
+        let msgPromise = subject.cold().pipe(take(1)).toPromise();
         subject.next("Hello");
         let msg = await msgPromise;
         expect(msg.data).to.be.eq('Hello');
@@ -39,9 +39,9 @@ describe('PowerNats', function () {
         type B = { b: string };
         let a$ = power.subject<A>({name: 'a', json: true});
         let b$ = power.subject<B>({name: 'b', json: true});
-        a$.cold.pipe(take(1), map<XMsg<A>, B>(value => ({b: value.data.a}))).subscribe(b$);
+        a$.cold().pipe(take(1), map<XMsg<A>, B>(value => ({b: value.data.a}))).subscribe(b$);
         a$.publish({a: "1"});
-        let result = await b$.cold.pipe(take(1)).toPromise();
+        let result = await b$.cold().pipe(take(1)).toPromise();
         expect(result.data).to.deep.eq({b: '1'});
         expect(power.client.numSubscriptions()).eq(0);
     });
@@ -53,7 +53,7 @@ describe('PowerNats', function () {
                 name: string().required()
             })
         });
-        let promise = a$.cold.pipe(take(1), materialize()).toPromise();
+        let promise = a$.cold().pipe(take(1), materialize()).toPromise();
         power.subject('x').publish("hello");
         let result = await promise;
         expect(result.error).to.be.an.instanceof(InvalidJSON);
@@ -87,7 +87,7 @@ describe('PowerNats', function () {
     it('should observe service health and start it again, when health check fails', async function () {
         let startServiceCommand$ = new Subject();
         let healthNatsSubject = power.subject({name: "service.health"});
-        let serviceHealth = healthNatsSubject.cold.pipe(share());
+        let serviceHealth = healthNatsSubject.cold().pipe(share());
         // service need to be alive at least 7 cycles
         let test = serviceHealth.pipe(take(7), pluck("data"), toArray());
         let running = true;
@@ -122,6 +122,18 @@ describe('PowerNats', function () {
         of('a', 'throw', 'b').subscribe(sub);
         await route.toPromise();
         expect(result).deep.eq(['a', 'b']);
+    });
+
+    it('should publish with parameters', async () => {
+        const sub = power.subject({name: (id: string) => `item.${id}`});
+        const prom = sub.cold('*').pipe(take(1)).toPromise();
+
+        sub.publish('hello', {
+            params: '4'
+        });
+        const result = await prom;
+        expect(result.name).to.eq('item.4');
+        expect(power.client.numSubscriptions()).eq(0);
     });
 });
 

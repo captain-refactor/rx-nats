@@ -8,38 +8,50 @@ export async function connectToNATS(): Promise<Client> {
     return await connect(process.env.NATS_URI || "");
 }
 
-export interface XMsg<T, R = unknown> {
-    subject: NatsSubject<T, R>;
+export interface XMsg<T, R = unknown, P = void> {
+    subject: NatsSubject<T, R, P>;
+    name: string;
     data?: T;
     reply?: NatsSubject<R, any>;
     sid: number;
     size: number;
 }
 
-export type RawNatsOptions = Pick<NatsSubjectOptions, "name" | "subscribeOpts">;
+export type RawNatsOptions<P> = Pick<NatsSubjectOptions<P>, "subscribeOpts" | "name">;
 
-export interface NatsSubjectOptions {
-    name: string;
+type NameFunction<P> = (params: P) => string
+type NameParam<P> = NameFunction<P> | string;
+
+export interface NatsSubjectOptions<P> {
+    name: NameParam<P>;
     json?: boolean;
     schema?: Schema;
     subscribeOpts?: SubscriptionOptions;
-    reply?: Omit<NatsSubjectOptions, "name">;
+    reply?: Omit<NatsSubjectOptions<void>, "name">;
 }
 
-export class HotNatsSubject implements NextObserver<any> {
+function getName<P>(name: NameParam<P>, params?: P): string {
+    if (typeof name === 'function') {
+        return name(params);
+    } else {
+        return name;
+    }
+}
+
+export class HotNatsSubject<P> implements NextObserver<any> {
     private _subject = new Subject<Msg>();
     private _subscription: Subscription;
 
-    constructor(private clientProvider: ClientProvider, private opts: RawNatsOptions) {
+    constructor(private clientProvider: ClientProvider, private opts: RawNatsOptions<P>) {
     }
 
     /**
      * Subscribe to nats subject.
      * we us nats prefix to avoid collision with rxjs subscribe method.
      */
-    async natsSubscribe(): Promise<void> {
+    async natsSubscribe(props?: P): Promise<void> {
         this._subscription = await this.clientProvider.client.subscribe(
-            this.opts.name,
+            getName(this.opts.name, props),
             (err, msg) => {
                 if (err) {
                     this._subject.error(err);
@@ -68,17 +80,17 @@ export class HotNatsSubject implements NextObserver<any> {
      * to implement subscriber
      */
     next(data?) {
-        this.clientProvider.client.publish(this.opts.name, data);
+        this.clientProvider.client.publish(getName(this.opts.name), data);
     }
 }
 
-export class ColdNatsSubject extends Observable<Msg> implements NextObserver<any> {
-    private _hot: HotNatsSubject;
+export class ColdNatsSubject<P> extends Observable<Msg> implements NextObserver<any> {
+    private _hot: HotNatsSubject<P>;
 
-    constructor(private clientProvider: ClientProvider, private opts: RawNatsOptions) {
+    constructor(private clientProvider: ClientProvider, private opts: RawNatsOptions<P>, private params: P) {
         super(subscriber => {
             let subscription = this._hot.observable().subscribe(subscriber);
-            this._hot.natsSubscribe().catch(reason => subscriber.error(reason));
+            this._hot.natsSubscribe(params).catch(reason => subscriber.error(reason));
             return () => {
                 subscription.unsubscribe();
                 this._hot.natsUnsubscribe();
@@ -88,7 +100,7 @@ export class ColdNatsSubject extends Observable<Msg> implements NextObserver<any
     }
 
     next(data?) {
-        this.clientProvider.client.publish(this.opts.name, data);
+        this.clientProvider.client.publish(getName(this.opts.name, this.params), data);
     }
 }
 
@@ -101,34 +113,35 @@ export class InvalidJSON extends RxNatsError {
     }
 }
 
-interface IPublishOptions {
+interface IPublishOptions<P> {
     reply?: string;
-    subjectSuffix?: string;
+    params?: P;
 }
 
-export class NatsSubject<T, R> implements NextObserver<T> {
-    private _hot: HotNatsSubject;
+export class NatsSubject<T, R, P = void> implements NextObserver<T> {
+    private _hot: HotNatsSubject<P>;
 
     get name() {
         return this.opts.name;
     }
 
-    readonly hot: Observable<XMsg<T, R>>;
+    readonly hot: Observable<XMsg<T, R, P>>;
 
-    readonly cold: Observable<XMsg<T, R>>;
+    cold(params?: P): Observable<XMsg<T, R, P>> {
+        return new ColdNatsSubject(this.clientProvider, this.opts, params).pipe(this.parseMsg());
+    }
 
-    constructor(private clientProvider: ClientProvider, private opts: NatsSubjectOptions) {
-        this._hot = new HotNatsSubject(this.clientProvider, this.opts);
+    constructor(private clientProvider: ClientProvider, private opts: NatsSubjectOptions<P>) {
+        this._hot = new HotNatsSubject<P>(this.clientProvider, this.opts);
         this.hot = this._hot.observable().pipe(this.parseMsg());
-        this.cold = new ColdNatsSubject(this.clientProvider, this.opts).pipe(this.parseMsg());
     }
 
     /**
      * Subscribe to nats subject.
      * we us nats prefix to avoid collision with rxjs subscribe method.
      */
-    natsSubscribe() {
-        return this._hot.natsSubscribe();
+    natsSubscribe(props?: P) {
+        return this._hot.natsSubscribe(props);
     }
 
     /**
@@ -139,14 +152,15 @@ export class NatsSubject<T, R> implements NextObserver<T> {
         return this._hot.natsUnsubscribe();
     }
 
-    request(data?: T): NatsSubject<R, any> {
-        let name = `INBOX_${this.opts.name}_${nuid.next()}`;
-        this.publish(data, {reply: name});
-        let inbox = this.opts.reply || {};
-        return new NatsSubject<R, any>(this.clientProvider, {name, ...inbox});
+    request(data: T, params?: P): NatsSubject<R, any> {
+        const aname = getName(this.opts.name, params);
+        const inboxName = `INBOX_${aname}_${nuid.next()}`;
+        this.publish(data, {reply: inboxName});
+        const inbox = this.opts.reply || {};
+        return new NatsSubject<R, any>(this.clientProvider, {name: inboxName, ...inbox});
     }
 
-    publish(data: T, opts?: IPublishOptions): void {
+    publish(data: T, opts?: IPublishOptions<P>): void {
         let toSend: any = data;
         if (this.opts.schema) {
             toSend = attempt(data, this.opts.schema);
@@ -154,8 +168,7 @@ export class NatsSubject<T, R> implements NextObserver<T> {
         if (data && this.opts.json) {
             toSend = JSON.stringify(data);
         }
-        let subj = this.opts.name;
-        if (opts?.subjectSuffix) subj += opts.subjectSuffix;
+        let subj = getName(this.opts.name, opts?.params);
         this.clientProvider.client.publish(subj, toSend, opts?.reply);
     }
 
@@ -166,7 +179,7 @@ export class NatsSubject<T, R> implements NextObserver<T> {
     private parseMsg() {
         let opts = this.opts;
         return map(
-            (msg: Msg): XMsg<T, R> => {
+            (msg: Msg): XMsg<T, R, P> => {
                 let data = msg.data;
                 if (opts.json && data !== undefined) {
                     try {
@@ -185,7 +198,7 @@ export class NatsSubject<T, R> implements NextObserver<T> {
                         name: msg.reply
                     });
                 }
-                return {subject: this, data, reply, sid: msg.sid, size: msg.size};
+                return {subject: this, name: msg.subject, data, reply, sid: msg.sid, size: msg.size};
             }
         );
     }
@@ -215,18 +228,18 @@ export class PowerNats {
         await this.clientProvider.init();
     }
 
-    subject<T = unknown, R = unknown>(
-        opts: NatsSubjectOptions | string
-    ): NatsSubject<T, R> {
+    subject<T = unknown, R = unknown, P = void>(
+        opts: NatsSubjectOptions<P> | NameParam<P>
+    ): NatsSubject<T, R, P> {
         if (!opts) {
             throw new Error("missing subject options");
         }
-        if (typeof opts === "string") {
+        if (typeof opts === "string" || typeof opts === 'function') {
             opts = {name: opts};
         }
         opts.subscribeOpts = opts.subscribeOpts || {};
         if (this.queue) opts.subscribeOpts.queue = this.queue;
-        return new NatsSubject<T, R>(this.clientProvider, opts);
+        return new NatsSubject<T, R, P>(this.clientProvider, opts);
     }
 
     close() {
