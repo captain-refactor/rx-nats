@@ -1,4 +1,4 @@
-import {connectToNATS, HotNatsSubject, InvalidJSON, PowerNats, SimpleClientProvider, XMsg} from "./nats";
+import {connectToNATS, HotNatsSubject, InvalidJSON, RxNats, SimpleClientProvider, XMsg} from "./nats";
 import {
     map,
     materialize,
@@ -17,36 +17,37 @@ import {object, string} from "@hapi/joi";
 import {interval, Observable, of, range, Subject} from "rxjs";
 import {Client} from "ts-nats";
 
-describe('PowerNats', function () {
-    let power: PowerNats;
+describe('RxNats', function () {
+    let rxNats: RxNats;
     before(async () => {
-        power = new PowerNats(connectToNATS())
-        await power.init();
+        rxNats = new RxNats(connectToNATS())
+        await rxNats.init();
     });
-    after(async () => power.close());
+    after(async () => rxNats.close());
+    afterEach(()=>{
+        expect(rxNats.client.numSubscriptions()).eq(0);
+    })
 
     it('should subscribe and unsubscribe', async function () {
-        let subject = power.subject<string>({name: 'test1'});
+        let subject = rxNats.subject<string>({name: 'test1'});
         let msgPromise = subject.cold().pipe(take(1)).toPromise();
         subject.next("Hello");
         let msg = await msgPromise;
         expect(msg.data).to.be.eq('Hello');
-        expect(power.client.numSubscriptions()).eq(0);
     });
 
     it('should pipe data from one subject to another', async function () {
         type A = { a: string };
         type B = { b: string };
-        let a$ = power.subject<A>({name: 'a', json: true});
-        let b$ = power.subject<B>({name: 'b', json: true});
+        let a$ = rxNats.subject<A>({name: 'a', json: true});
+        let b$ = rxNats.subject<B>({name: 'b', json: true});
         a$.cold().pipe(take(1), map<XMsg<A>, B>(value => ({b: value.data.a}))).subscribe(b$);
         a$.publish({a: "1"});
         let result = await b$.cold().pipe(take(1)).toPromise();
         expect(result.data).to.deep.eq({b: '1'});
-        expect(power.client.numSubscriptions()).eq(0);
     });
     it('should propagate parsing error', async function () {
-        let a$ = power.subject({
+        let a$ = rxNats.subject({
             name: 'x',
             json: true,
             schema: object({
@@ -54,13 +55,13 @@ describe('PowerNats', function () {
             })
         });
         let promise = a$.cold().pipe(take(1), materialize()).toPromise();
-        power.subject('x').publish("hello");
+        rxNats.subject('x').publish("hello");
         let result = await promise;
         expect(result.error).to.be.an.instanceof(InvalidJSON);
     });
 
     it('should be possible to handle errors without resubscribe', async function () {
-        let a$ = power.subject({
+        let a$ = rxNats.subject({
             name: 'x2',
             json: true,
             schema: object({
@@ -69,7 +70,7 @@ describe('PowerNats', function () {
         });
         await a$.natsSubscribe();
         let promise = a$.hot.pipe(retry(), take(1)).toPromise();
-        power.subject('x2').publish("bad value");
+        rxNats.subject('x2').publish("bad value");
         a$.publish({name: "good value"});
         let result = await promise;
         a$.natsUnsubscribe();
@@ -86,7 +87,7 @@ describe('PowerNats', function () {
     });
     it('should observe service health and start it again, when health check fails', async function () {
         let startServiceCommand$ = new Subject();
-        let healthNatsSubject = power.subject({name: "service.health"});
+        let healthNatsSubject = rxNats.subject({name: "service.health"});
         let serviceHealth = healthNatsSubject.cold().pipe(share());
         // service need to be alive at least 7 cycles
         let test = serviceHealth.pipe(take(7), pluck("data"), toArray());
@@ -102,7 +103,7 @@ describe('PowerNats', function () {
 
     it('should subscribe to hot observable and receive messages', async function () {
         // let sub = new Subject();
-        let sub = power.subject("hot");
+        let sub = rxNats.subject("hot");
         await sub.natsSubscribe();
         let testPromise = sub.hot.pipe(take(3), pluck('data'), toArray()).toPromise();
         range(0, 3).pipe(map(x => x.toString())).subscribe(sub);
@@ -112,7 +113,7 @@ describe('PowerNats', function () {
     });
 
     it('should stay subscribed, when error happens', async function () {
-        let sub = power.subject("resource.get");
+        let sub = rxNats.subject("resource.get");
         await sub.natsSubscribe();
         let result = [];
         let route = sub.hot.pipe(tap(msg => {
@@ -122,18 +123,21 @@ describe('PowerNats', function () {
         of('a', 'throw', 'b').subscribe(sub);
         await route.toPromise();
         expect(result).deep.eq(['a', 'b']);
+        sub.natsUnsubscribe();
     });
 
     it('should publish with parameters', async () => {
-        const sub = power.subject({name: (id: string) => `item.${id}`});
+        const sub = rxNats.subject({name: (id: string) => `item.${id}`});
+        expect(rxNats.client.numSubscriptions()).eq(0);
         const prom = sub.cold('*').pipe(take(1)).toPromise();
+        expect(rxNats.client.numSubscriptions()).eq(1);
 
         sub.publish('hello', {
             params: '4'
         });
         const result = await prom;
         expect(result.name).to.eq('item.4');
-        expect(power.client.numSubscriptions()).eq(0);
+        expect(rxNats.client.numSubscriptions()).eq(0);
     });
 });
 

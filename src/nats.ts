@@ -209,7 +209,7 @@ function isPromise<T>(obj: T | Promise<T>): obj is Promise<T> {
 
 }
 
-export class PowerNats {
+export class RxNats {
     private readonly clientProvider: ClientProvider;
 
     get client() {
@@ -245,10 +245,6 @@ export class PowerNats {
     close() {
         this.clientProvider.client.close();
     }
-}
-
-export interface FrameOptions {
-    log?: boolean | string[]; // default true
 }
 
 export interface ClientProvider {
