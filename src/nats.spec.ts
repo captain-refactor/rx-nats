@@ -1,4 +1,4 @@
-import {connectToNATS, HotNatsSubject, InvalidJSON, RxNats, SimpleClientProvider, XMsg} from "./nats";
+import {connectToNATS, InvalidJSON, RxNats, XMsg} from "./nats";
 import {
     map,
     materialize,
@@ -15,12 +15,11 @@ import {
 import {expect} from "chai";
 import {object, string} from "@hapi/joi";
 import {interval, Observable, of, range, Subject} from "rxjs";
-import {Client} from "ts-nats";
 
 describe('RxNats', function () {
     let rxNats: RxNats;
     before(async () => {
-        rxNats = new RxNats(connectToNATS())
+        rxNats = new RxNats(connectToNATS)
         await rxNats.init();
     });
 

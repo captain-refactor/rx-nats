@@ -17,7 +17,7 @@ export interface XMsg<T, R = unknown, P = void> {
     size: number;
 }
 
-export type RawNatsOptions<P> = Pick<NatsSubjectOptions<P>, "subscribeOpts" | "name">;
+type RawNatsOptions<P> = Pick<NatsSubjectOptions<P>, "subscribeOpts" | "name">;
 
 type NameFunction<P> = (params: P) => string
 type NameParam<P> = NameFunction<P> | string;
@@ -38,7 +38,7 @@ function getName<P>(name: NameParam<P>, params?: P): string {
     }
 }
 
-export class HotNatsSubject<P> implements NextObserver<any> {
+class HotNatsSubject<P> implements NextObserver<any> {
     private _subject = new Subject<Msg>();
     private _subscription: Subscription;
 
@@ -84,7 +84,7 @@ export class HotNatsSubject<P> implements NextObserver<any> {
     }
 }
 
-export class ColdNatsSubject<P> extends Observable<Msg> implements NextObserver<any> {
+class ColdNatsSubject<P> extends Observable<Msg> implements NextObserver<any> {
     private _hot: HotNatsSubject<P>;
 
     constructor(private clientProvider: ClientProvider, private opts: RawNatsOptions<P>, private params: P) {
@@ -216,9 +216,11 @@ export class RxNats {
         return this.clientProvider.client;
     }
 
-    constructor(client: Client | Promise<Client>, public queue?: string) {
+    constructor(client: Client | Promise<Client> | ClientFn, public queue?: string) {
         if (isPromise(client)) {
             this.clientProvider = new PromiseClientProvider(client);
+        }  else if (typeof client === 'function') {
+            this.clientProvider = new FunctionClientProvider(client);
         } else {
             this.clientProvider = new SimpleClientProvider(client);
         }
@@ -275,5 +277,24 @@ export class SimpleClientProvider implements ClientProvider {
     }
 
     async init() {
+    }
+}
+
+type ClientFn = (() => Client) | (() => Promise<Client>);
+
+export class FunctionClientProvider implements ClientProvider {
+    private _client: Client;
+    get client(): Client {
+        if (!this._client) {
+            throw new Error("nats client not initialized");
+        }
+        return this._client;
+    }
+
+    constructor(private clientFn: ClientFn) {
+    }
+
+    async init() {
+        this._client = await this.clientFn();
     }
 }
