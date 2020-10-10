@@ -23,8 +23,10 @@ describe('RxNats', function () {
         rxNats = new RxNats(connectToNATS())
         await rxNats.init();
     });
+
     after(async () => rxNats.close());
-    afterEach(()=>{
+
+    afterEach(() => {
         expect(rxNats.client.numSubscriptions()).eq(0);
     })
 
@@ -139,21 +141,11 @@ describe('RxNats', function () {
         expect(result.name).to.eq('item.4');
         expect(rxNats.client.numSubscriptions()).eq(0);
     });
-});
 
-describe('HotNatsSubject', function () {
-    let client: Client;
-    before(async () => {
-        client = await connectToNATS();
-    });
-    after(async () => {
-        client.close();
-    });
     it('should subscribe to data in hot observable', async function () {
-        let sub = new HotNatsSubject(new SimpleClientProvider(client), {name: "hot"});
-        let test = sub.observable().pipe(take(3), pluck('data'), toArray());
+        const sub = rxNats.subject('hot');
         await sub.natsSubscribe();
-        let resultPromise = test.toPromise();
+        const resultPromise = sub.hot.pipe(take(3), pluck('data'), toArray()).toPromise();
         range(0, 5).pipe(map(x => x.toString())).subscribe(sub);
         let result = await resultPromise;
         expect(result).deep.eq(['0', '1', '2']);
