@@ -17,7 +17,7 @@ export interface XMsg<T, R = unknown, P = void> {
     size: number;
 }
 
-type RawNatsOptions<P> = Pick<NatsSubjectOptions<P>, "subscribeOpts" | "name">;
+type RawNatsOptions<P> = Pick<NatsSubjectOptions<P>, "queue" | "max" | "name">;
 
 type NameFunction<P> = (params: P) => string
 type NameParam<P> = NameFunction<P> | string;
@@ -25,10 +25,17 @@ type NameParam<P> = NameFunction<P> | string;
 export interface NatsSubjectOptions<P> {
     name: NameParam<P>;
     json?: boolean;
+    /** Schema validation for subject */
     schema?: Schema;
-    subscribeOpts?: SubscriptionOptions;
+    /** Name of the queue group for the subscription. True means that we will use default queue name */
+    queue?: string;
+    /** Maximum number of messages expected. When this number of messages is received the subscription auto [[Subscription.unsubscribe]]. */
+    max?: number;
+    /** Reply subject options */
     reply?: Omit<NatsSubjectOptions<void>, "name">;
 }
+
+export type NewSubjectOptions<P> = Omit<NatsSubjectOptions<P>, 'queue'> & { queue?: true | string };
 
 function getName<P>(name: NameParam<P>, params?: P): string {
     if (typeof name === 'function') {
@@ -50,6 +57,7 @@ class HotNatsSubject<P> implements NextObserver<any> {
      * we us nats prefix to avoid collision with rxjs subscribe method.
      */
     async natsSubscribe(props?: P): Promise<void> {
+        const {queue, max} = this.opts;
         this._subscription = await this.clientProvider.client.subscribe(
             getName(this.opts.name, props),
             (err, msg) => {
@@ -59,7 +67,7 @@ class HotNatsSubject<P> implements NextObserver<any> {
                     this._subject.next(msg);
                 }
             },
-            this.opts.subscribeOpts
+            {queue, max}
         );
     }
 
@@ -219,7 +227,7 @@ export class RxNats {
     constructor(client: Client | Promise<Client> | ClientFn, public queue?: string) {
         if (isPromise(client)) {
             this.clientProvider = new PromiseClientProvider(client);
-        }  else if (typeof client === 'function') {
+        } else if (typeof client === 'function') {
             this.clientProvider = new FunctionClientProvider(client);
         } else {
             this.clientProvider = new SimpleClientProvider(client);
@@ -231,7 +239,7 @@ export class RxNats {
     }
 
     subject<T = unknown, R = unknown, P = void>(
-        opts: NatsSubjectOptions<P> | NameParam<P>
+        opts: NewSubjectOptions<P> | NameParam<P>
     ): NatsSubject<T, R, P> {
         if (!opts) {
             throw new Error("missing subject options");
@@ -239,9 +247,13 @@ export class RxNats {
         if (typeof opts === "string" || typeof opts === 'function') {
             opts = {name: opts};
         }
-        opts.subscribeOpts = opts.subscribeOpts || {};
-        if (this.queue) opts.subscribeOpts.queue = this.queue;
-        return new NatsSubject<T, R, P>(this.clientProvider, opts);
+        if (opts.queue === true) {
+            if (!this.queue) {
+                throw new Error("no default queue available")
+            }
+            opts.queue = this.queue;
+        }
+        return new NatsSubject<T, R, P>(this.clientProvider, opts as NatsSubjectOptions<P>);
     }
 
     close() {
