@@ -257,7 +257,9 @@ export class RxNats {
     }
 
     close() {
-        this.clientProvider.client.close();
+        if (!this.clientProvider.client.isClosed()) {
+            this.clientProvider.client.close();
+        }
     }
 }
 
