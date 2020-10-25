@@ -219,9 +219,14 @@ function isPromise<T>(obj: T | Promise<T>): obj is Promise<T> {
 
 export class RxNats {
     private readonly clientProvider: ClientProvider;
+    private _isInitialized = false;
 
     get client() {
         return this.clientProvider.client;
+    }
+
+    get isInitialized(): boolean {
+        return this._isInitialized;
     }
 
     constructor(client: Client | Promise<Client> | ClientFn, public queue?: string) {
@@ -235,7 +240,10 @@ export class RxNats {
     }
 
     async init() {
-        await this.clientProvider.init();
+        if (!this._isInitialized) {
+            await this.clientProvider.init();
+            this._isInitialized = true;
+        }
     }
 
     subject<T = unknown, R = unknown, P = void>(
@@ -257,7 +265,7 @@ export class RxNats {
     }
 
     close() {
-        if (!this.clientProvider.client.isClosed()) {
+        if (this._isInitialized && !this.clientProvider.client.isClosed()) {
             this.clientProvider.client.close();
         }
     }
